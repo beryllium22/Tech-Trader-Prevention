@@ -1,0 +1,22 @@
+<ModMetaData>
+  <name>Replace Higher Tech Traders</name>
+  <author>SummerSausages2TTV</author>
+  <url>https://your-mod-page-link.example.com</url>
+  <description>
+    This mod replaces traders from factions with a higher tech level than the player's faction. The tech level difference can be adjusted in the mod settings. By default, only factions with a tech level up to one level higher than the player's faction are allowed. The list of allowed factions is updated whenever the player's tech level changes or a new game is started or loaded.
+  </description>
+  <packageId>SummerSausages2TTV.ReplaceHigherTechTraders.Specific</packageId>
+  <supportedVersions>
+    <li>1.4.0</li>
+  </supportedVersions>
+  <dependencies>
+    <li>
+      <packageId>ludeon.rimworld</packageId>
+      <displayName>RimWorld</displayName>
+    </li>
+    <li>
+      <packageId>ludeon.rimworld.mod.harmony</packageId>
+      <displayName>Harmony</displayName>
+    </li>
+  </dependencies>
+</ModMetaData>

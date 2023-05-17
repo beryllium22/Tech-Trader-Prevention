@@ -1,0 +1,22 @@
+<ModMetaData>
+  <name>Prevent Higher Tech Traders</name>
+  <author>SummerSausages2TTV</author>
+  <url>https://your-mod-page-link.example.com</url>
+  <description>
+    This mod prevents traders from factions with a higher tech level than the player's faction from spawning.
+  </description>
+  <packageId>SummerSausages2TTV.PreventHigherTechTraders.Specific</packageId>
+  <supportedVersions>
+    <li>1.4.0</li>
+  </supportedVersions>
+  <dependencies>
+    <li>
+      <packageId>ludeon.rimworld</packageId>
+      <displayName>RimWorld</displayName>
+    </li>
+    <li>
+      <packageId>ludeon.rimworld.mod.harmony</packageId>
+      <displayName>Harmony</displayName>
+    </li>
+  </dependencies>
+</ModMetaData>

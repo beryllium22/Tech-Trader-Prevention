@@ -23,6 +23,7 @@ namespace TechTraderPrevention
         private static readonly Dictionary<ThingDef, List<RecipeDef>> RecipesByProduct =
             new Dictionary<ThingDef, List<RecipeDef>>();
         private static int indexedRecipeCount = -1;
+        private static List<RecipeDef> indexedRecipes;
 
         internal static bool TryResolve(Thing item, bool recipeFallback, out List<SalvageMaterial> materials)
         {
@@ -54,6 +55,7 @@ namespace TechTraderPrevention
         {
             RecipesByProduct.Clear();
             indexedRecipeCount = -1;
+            indexedRecipes = null;
         }
 
         private static bool TryRecipeCosts(Thing item, out List<SalvageMaterial> materials)
@@ -72,6 +74,11 @@ namespace TechTraderPrevention
                     recipe.products[0].thingDef != item.def || recipe.products[0].count <= 0 ||
                     recipe.ingredients == null || recipe.ingredients.Count == 0 ||
                     recipe.ignoreIngredientCountTakeEntireStacks || recipe.specialProducts != null && recipe.specialProducts.Count > 0)
+                    return false;
+                // A custom worker may override ingredient consumption using bill/workbench state.
+                // Declared native costs still work; recipe-only equipment is kept when its worker
+                // cannot be reconstructed from fixed ingredient definitions alone.
+                if (recipe.workerClass != typeof(RecipeWorker))
                     return false;
 
                 var costs = new Dictionary<ThingDef, double>();
@@ -110,12 +117,12 @@ namespace TechTraderPrevention
         private static void EnsureRecipeIndex()
         {
             List<RecipeDef> all = DefDatabase<RecipeDef>.AllDefsListForReading;
-            if (indexedRecipeCount == all.Count)
+            if (ReferenceEquals(indexedRecipes, all) && indexedRecipeCount == all.Count)
                 return;
             RecipesByProduct.Clear();
             foreach (RecipeDef recipe in all)
             {
-                if (recipe.products == null)
+                if (recipe == null || recipe.products == null)
                     continue;
                 foreach (ThingDefCountClass product in recipe.products)
                 {
@@ -129,6 +136,7 @@ namespace TechTraderPrevention
                 }
             }
             indexedRecipeCount = all.Count;
+            indexedRecipes = all;
         }
 
         private static bool SafeMaterial(ThingDef def, ThingDef original)

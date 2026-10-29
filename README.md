@@ -42,7 +42,7 @@ Here, same tech normally means **no higher technology**, allowing lower-tier tra
 
 The mod filters caravan faction candidates after the game's own suitability checks. A late check handles already-selected factions. Replacement randomly selects a suitable alternative and lets the normal resolver choose its trader kind. A bounded retry avoids recursive replacement. If no alternative exists, cancel the event or explicitly enable the allow-original fallback.
 
-Standard trade sessions filter **purchases without deleting stock**. Colony sales and gifts remain available. An execution-time check rejects prohibited purchases inserted later or left in a dialog after rules change. Reopen a trade dialog after editing settings to refresh its display. Minified items are checked using the contained item's technology rather than the wrapper's undefined tier.
+Standard trade sessions filter **purchases without deleting stock**. Colony sales and gifts remain available. A scoped policy context is reused while a stock list is built, avoiding repeated custom-trader and colony-policy lookups for every item. An execution-time check uses fresh rules and checks the trader-side contents of purchase groups, including groups assembled by other mods. Reopen a trade dialog after editing settings to refresh its display. Minified items are checked using the contained item's technology rather than the wrapper's undefined tier.
 
 Options include:
 
@@ -70,7 +70,7 @@ For tier completion, choose base-research-cost weighting or equal project weight
 
 Only loaded content definitions count. Normal modded research participates automatically. Exclude specific projects or entire package IDs, override project tiers, include zero-cost/hidden research, and optionally include Anomaly's separate knowledge progression. Knowledge projects use their knowledge cost when included; other projects use base research cost. Finished hidden projects remain counted. Hidden-project detection uses the game API on 1.5/1.6; the same API is absent on 1.4.
 
-Completion/reset hooks invalidate a per-game cache; periodic on-demand refresh catches changes made through other mods. Research is not scanned every tick. Faction/manual modes use cheap live reads. **Status & help** displays the current level and tier progress.
+Completion/reset hooks invalidate a per-game cache; periodic on-demand refresh catches changes made through other mods. Research is streamed through the calculator in one pass rather than copied into a second project list. Faction/manual modes use cheap live reads. **Status & help** displays the current level and tier progress.
 
 The mod does not rewrite faction definitions, prerequisites, research costs or research-speed penalties. These rules determine this mod's trading/salvage threshold. Use `Faction` mode when another mod should control advancement.
 
@@ -90,11 +90,11 @@ Recovery supports a fixed 0–100% survival fraction or a fresh random fraction 
 
 ### Which materials drop?
 
-The preferred source is the game's adjusted crafting cost list, including the item's actual stuff and other mods' cost patches. An optional recipe fallback accepts only unambiguous producing recipes that agree on normalized ingredient costs. Unknown ingredients, mixed-stuff ambiguity and uncertain alternatives preserve equipment rather than inventing materials.
+The preferred source is the game's adjusted crafting cost list, including the item's actual stuff and other mods' cost patches. An optional recipe fallback accepts only unambiguous producing recipes that agree on normalized ingredient costs. Unknown ingredients, mixed-stuff ambiguity, custom recipe workers and uncertain alternatives preserve equipment rather than inventing materials when there is no usable adjusted cost list.
 
 This reconstructs **definition-specified crafting costs**, not a historical receipt for a particular crafting bill. Noncraftable/unknown-cost equipment is preserved. “Components” means crafting ingredients: steel, plasteel, cloth, components, advanced components, and other materials actually specified by known costs.
 
-Outputs are staged before removing equipment. New stacks avoid merging with existing resources so a failed placement can roll back only the generated outputs. A stack-count bound prevents malformed definitions from causing extreme spawn loops. Mods that extensively replace destruction/placement may still need integration work.
+Outputs are staged before removing equipment. Placement requests separate stacks, records the placement callbacks, and rechecks source ownership and stack size before committing. Standard merge/split callbacks from stacking mods can be accounted for during rollback. A stack-count bound prevents malformed definitions from causing extreme spawn loops. Mods that suppress placement callbacks, convert objects into virtual storage, or replace destruction may still need integration work.
 
 ## DLC and other mods
 
@@ -107,6 +107,21 @@ No DLC is required. The mod uses loaded definitions and the shared game API:
 - **Odyssey:** the 1.6 build retains the game's faction suitability checks, including map/layer/content conditions.
 
 These are implementation safeguards, not a claim of playtesting every combination. Total trade-system replacements, custom incidents or loot workers may need adapters. Multiplayer synchronization is not claimed. Details: [COMPATIBILITY.md](docs/COMPATIBILITY.md).
+
+## Using a large modpack
+
+Harmony must load before this mod. Keep the legacy trader-prevention variants disabled. There is no blanket requirement to place this mod last: Harmony patch priorities and each content mod's own load-order rules still matter.
+
+If another mod manages colony advancement by changing the player's faction technology, select **Colony research → Method → Faction**. For independent research-based restrictions, use TierCompletion and exclude unavailable or unwanted research packages. Content that adds ordinary research, equipment, materials or factions is discovered through the loaded definitions.
+
+The **Status & help** tab includes two maintenance tools:
+
+- **Write compatibility report to player log** checks whether this mod's expected callbacks are still installed, lists other Harmony owners on the same targets, and records loaded mod IDs in load order. Shared targets alone do not prove a conflict. Nothing is uploaded.
+- **Refresh research, overrides and recipe caches** lets a player refresh integrations after a mod changes definitions during play. Settings remain intact.
+
+Use the separate trader-channel switches and definition exclusions for custom systems that need an adapter. For equipment handled by another salvage, recycling or virtual-storage mechanic, exclude those equipment definitions until their interaction is tested. This mod deliberately does not claim multiplayer or background-thread simulation support.
+
+The automated suite includes a 20,000-project research fixture and checks the private game API contracts used by Harmony across all three supported versions. These are correctness and API checks, not in-game frame-rate measurements or certification of an arbitrary modpack. The [acceptance checklist](docs/VALIDATION.md) covers the remaining game-level tests.
 
 ## Advanced customization
 

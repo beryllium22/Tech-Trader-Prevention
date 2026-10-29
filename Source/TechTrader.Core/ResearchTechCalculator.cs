@@ -58,12 +58,13 @@ namespace TechTraderPrevention.Core
             int floor = rules.UseFactionFloor ? Math.Max(minimum, TechRules.ClampTier(rules.FactionTier)) : minimum;
             floor = Math.Min(floor, maximum);
             var tiers = new TierProgress[8];
+            double commonThreshold = TechRules.Fraction(rules.CompletionThreshold, 0.75);
             for (int i = 0; i < tiers.Length; i++)
             {
                 double threshold;
                 if (rules.TierThresholds == null || !rules.TierThresholds.TryGetValue(i, out threshold))
-                    threshold = rules.CompletionThreshold;
-                tiers[i] = new TierProgress { Tier = i, Threshold = TechRules.Fraction(threshold, 0.75) };
+                    threshold = commonThreshold;
+                tiers[i] = new TierProgress { Tier = i, Threshold = TechRules.Fraction(threshold, commonThreshold) };
             }
             int highest = floor;
             if (samples != null)

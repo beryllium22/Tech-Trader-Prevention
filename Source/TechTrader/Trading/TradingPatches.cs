@@ -17,9 +17,33 @@ namespace TechTraderPrevention.Trading
         private static MethodInfo resolveMethod;
         private static bool sourceUsesMap;
 
-        [ThreadStatic] private static int originalSuitabilityDepth;
-        [ThreadStatic] private static int replacementDepth;
-        [ThreadStatic] private static int preservedQuestDepth;
+        [ThreadStatic] private static object suitabilityWorker;
+        [ThreadStatic] private static Faction suitabilityFaction;
+        [ThreadStatic] private static object suitabilityContext;
+        [ThreadStatic] private static object replacementWorker;
+        [ThreadStatic] private static IncidentParms replacementParms;
+        [ThreadStatic] private static IncidentScope currentIncident;
+        [ThreadStatic] private static TradeBuildScope currentTradeBuild;
+
+        private static readonly Dictionary<Type, FieldInfo[]> ParameterFields = new Dictionary<Type, FieldInfo[]>();
+
+        private sealed class IncidentScope
+        {
+            internal IncidentScope Previous;
+            internal object Worker;
+            internal IncidentParms Parms;
+            internal int SettingsRevision;
+            internal int ColonyLevel;
+        }
+
+        private sealed class TradeBuildScope
+        {
+            internal TradeBuildScope Previous;
+            internal TradeDeal Deal;
+            internal ITrader Trader;
+            internal int SettingsRevision;
+            internal TradingPolicy.OfferContext Context;
+        }
 
         public static void Apply(Harmony harmony)
         {
@@ -36,60 +60,63 @@ namespace TechTraderPrevention.Trading
                         || parameters[1].ParameterType == typeof(IncidentParms)))
                 {
                     sourceUsesMap = parameters[1].ParameterType == typeof(Map);
-                    Patch(harmony, factionSourceMethod, null, nameof(FactionSourcePostfix));
                 }
                 else
                 {
                     factionSourceMethod = null;
-                    Log.Error("[Tech Trader Prevention] Unsupported faction-selection signature; caravan replacement is disabled.");
                 }
             }
-            else
-            {
-                Log.Error("[Tech Trader Prevention] Faction-selection hook was not found; caravan replacement is disabled.");
-            }
-
-            Patch(harmony, resolveMethod, nameof(ResolvePrefix), nameof(ResolvePostfix), nameof(ResolveFinalizer));
-            Patch(harmony, AccessTools.Method(worker, "CanFireNowSub", new[] { typeof(IncidentParms) }),
+            Patch(harmony, factionSourceMethod, "Caravan faction suitability", null,
+                sourceUsesMap ? nameof(FactionSourceMapPostfix) : nameof(FactionSourceParmsPostfix));
+            Patch(harmony, resolveMethod, "Caravan faction resolution", nameof(ResolvePrefix), nameof(ResolvePostfix), nameof(ResolveFinalizer));
+            Patch(harmony, AccessTools.Method(worker, "CanFireNowSub", new[] { typeof(IncidentParms) }), "Quest caravan availability",
                 nameof(ResolvePrefix), null, nameof(ResolveFinalizer));
+            Patch(harmony, AccessTools.Method(typeof(TradeDeal), "AddAllTradeables", Type.EmptyTypes), "Trade stock evaluation scope",
+                nameof(BuildTradePrefix), null, nameof(BuildTradeFinalizer));
             Patch(harmony, AccessTools.Method(typeof(TradeDeal), "AddToTradeables",
-                new[] { typeof(Thing), typeof(Transactor) }), nameof(AddToTradeablesPrefix), null);
+                new[] { typeof(Thing), typeof(Transactor) }), "Trader offered-stock filter", nameof(AddToTradeablesPrefix), null);
             Patch(harmony, AccessTools.Method(typeof(TradeDeal), "TryExecute",
-                new[] { typeof(bool).MakeByRefType() }), nameof(ExecuteTradePrefix), null);
+                new[] { typeof(bool).MakeByRefType() }), "Trade purchase validation", nameof(ExecuteTradePrefix), null);
         }
 
-        private static void Patch(Harmony harmony, MethodBase target, string prefix, string postfix, string finalizer = null)
+        private static void Patch(Harmony harmony, MethodBase target, string feature, string prefix, string postfix, string finalizer = null)
         {
-            if (target == null)
-            {
-                Log.Error("[Tech Trader Prevention] Required trading hook is unavailable: " + (prefix ?? postfix));
-                return;
-            }
-
-            try
-            {
-                harmony.Patch(target,
-                    prefix == null ? null : new HarmonyMethod(typeof(TradingPatches), prefix)
-                    { priority = prefix == nameof(ExecuteTradePrefix) ? Priority.First : Priority.Last },
-                    postfix == null ? null : new HarmonyMethod(typeof(TradingPatches), postfix) { priority = Priority.Last },
-                    finalizer: finalizer == null ? null : new HarmonyMethod(typeof(TradingPatches), finalizer));
-            }
-            catch (Exception exception)
-            {
-                Log.Error("[Tech Trader Prevention] Could not patch " + target.DeclaringType.FullName + "." + target.Name + ": " + exception);
-            }
+            CompatibilityDiagnostics.Patch(harmony, target, feature,
+                prefix == null ? null : new HarmonyMethod(typeof(TradingPatches), prefix)
+                {
+                    // Scope setup must run before ordinary prefixes that may
+                    // replace the method; Harmony can skip later stateful prefixes.
+                    priority = prefix == nameof(AddToTradeablesPrefix) ? Priority.Last : Priority.First
+                },
+                postfix == null ? null : new HarmonyMethod(typeof(TradingPatches), postfix) { priority = Priority.Last },
+                finalizer == null ? null : new HarmonyMethod(typeof(TradingPatches), finalizer));
         }
 
-        // __0 makes the patch independent of parameter-name changes between game builds.
-        private static void FactionSourcePostfix(object __instance, Faction __0, object[] __args, ref bool __result)
+        // Typed postfixes avoid Harmony allocating/boxing object[] arguments for
+        // every candidate check, even with restrictions disabled.
+        private static void FactionSourceMapPostfix(object __instance, Faction __0, Map __1, ref bool __result)
         {
-            if (!__result || !(__instance is IncidentWorker_TraderCaravanArrival)
-                || originalSuitabilityDepth != 0 || preservedQuestDepth != 0 || !CaravanRulesEnabled())
+            FilterFactionSource(__instance, __0, null, __1, ref __result);
+        }
+
+        private static void FactionSourceParmsPostfix(object __instance, Faction __0, IncidentParms __1, ref bool __result)
+        {
+            FilterFactionSource(__instance, __0, __1, __1 == null ? null : __1.target as Map, ref __result);
+        }
+
+        private static void FilterFactionSource(object worker, Faction faction, IncidentParms parms, Map map, ref bool result)
+        {
+            if (!result || !(worker is IncidentWorker_TraderCaravanArrival) || !CaravanRulesEnabled())
                 return;
 
+            object context = sourceUsesMap ? (object)map : parms;
+            if (ReferenceEquals(suitabilityWorker, worker) && ReferenceEquals(suitabilityFaction, faction)
+                && ReferenceEquals(suitabilityContext, context))
+                return;
+
+            IncidentScope scope = MatchingScope(worker, parms, map);
             TechTraderSettings settings = TechTraderMod.Settings;
-            IncidentParms parms = __args.Length > 1 ? __args[1] as IncidentParms : null;
-            if (PreserveQuest(parms))
+            if (PreserveQuest(parms ?? scope?.Parms))
                 return;
 
             // In fallback mode the normal game can pick a faction first. The late
@@ -98,30 +125,55 @@ namespace TechTraderPrevention.Trading
             if (settings.AllowOriginalWhenNoReplacement)
                 return;
 
-            __result = TradingPolicy.FactionAllowed(__0);
+            if (scope == null)
+            {
+                result = TradingPolicy.FactionAllowed(faction);
+                return;
+            }
+            if (scope.SettingsRevision != TechTraderMod.SettingsRevision)
+            {
+                scope.ColonyLevel = (int)ColonyTech.CurrentLevel;
+                scope.SettingsRevision = TechTraderMod.SettingsRevision;
+            }
+            result = TradingPolicy.FactionAllowed(faction, false, settings, scope.ColonyLevel);
         }
 
-        private static void ResolvePrefix(object __instance, IncidentParms __0, out bool __state)
+        private static IncidentScope MatchingScope(object worker, IncidentParms parms, Map map)
         {
-            __state = __instance is IncidentWorker_TraderCaravanArrival && CaravanRulesEnabled() && PreserveQuest(__0);
-            if (__state)
-                preservedQuestDepth++;
+            IncidentScope scope = currentIncident;
+            if (scope == null || !ReferenceEquals(scope.Worker, worker)) return null;
+            return parms != null ? (ReferenceEquals(scope.Parms, parms) ? scope : null)
+                : (ReferenceEquals(scope.Parms?.target, map) ? scope : null);
         }
 
-        private static Exception ResolveFinalizer(bool __state, Exception __exception)
+        private static void ResolvePrefix(object __instance, IncidentParms __0, out IncidentScope __state)
         {
-            // Older game versions pass only a Map to faction suitability checks.
-            // Carry the quest exception through the resolver without losing it, and
-            // always restore it even if another mod's resolver throws an exception.
-            if (__state)
-                preservedQuestDepth--;
+            __state = null;
+            if (!(__instance is IncidentWorker_TraderCaravanArrival) || !CaravanRulesEnabled()) return;
+            // Record ordinary incidents too: a nested unrelated incident must not
+            // inherit the outer quest's exemption simply because it is on the stack.
+            __state = new IncidentScope
+            {
+                Previous = currentIncident,
+                Worker = __instance,
+                Parms = __0,
+                ColonyLevel = (int)ColonyTech.CurrentLevel,
+                SettingsRevision = TechTraderMod.SettingsRevision
+            };
+            currentIncident = __state;
+        }
+
+        private static Exception ResolveFinalizer(IncidentScope __state, Exception __exception)
+        {
+            if (__state != null) currentIncident = __state.Previous;
             return __exception;
         }
 
         private static void ResolvePostfix(object __instance, IncidentParms __0, ref bool __result)
         {
             IncidentWorker_TraderCaravanArrival worker = __instance as IncidentWorker_TraderCaravanArrival;
-            if (!__result || worker == null || __0 == null || replacementDepth != 0
+            if (!__result || worker == null || __0 == null
+                || (ReferenceEquals(replacementWorker, worker) && ReferenceEquals(replacementParms, __0))
                 || !CaravanRulesEnabled() || PreserveQuest(__0)
                 || TradingPolicy.FactionAllowed(__0.faction))
                 return;
@@ -143,18 +195,24 @@ namespace TechTraderPrevention.Trading
                 return;
             }
 
-            // Re-run the normal resolver once, so it can choose a valid trader kind
-            // for the new faction and retain any other mods' suitability logic.
-            // A depth guard prevents recursive replacement, and a copy preserves
-            // the original event if a compatibility patch rejects the replacement.
-            IncidentParms retry = __0.ShallowCopy();
-            retry.faction = replacement;
-            retry.traderKind = null;
+            // Retain the IncidentParms identity for mods which attach state to it.
+            // Successful resolver changes to fields beyond faction/traderKind must
+            // survive too. On failure, restore writable fields from a shallow
+            // snapshot; arbitrary nested-object/external mod side effects cannot
+            // be undone here (nor by resolving a shallow copy).
+            FieldInfo[] fields = GetParameterFields(__0.GetType());
+            object[] before = new object[fields.Length];
+            for (int i = 0; i < fields.Length; i++) before[i] = fields[i].GetValue(__0);
+            object previousWorker = replacementWorker;
+            IncidentParms previousParms = replacementParms;
+            __0.faction = replacement;
+            __0.traderKind = null;
             bool resolved = false;
             try
             {
-                replacementDepth++;
-                resolved = resolveMethod != null && (bool)resolveMethod.Invoke(worker, new object[] { retry });
+                replacementWorker = worker;
+                replacementParms = __0;
+                resolved = resolveMethod != null && (bool)resolveMethod.Invoke(worker, new object[] { __0 });
             }
             catch (Exception exception)
             {
@@ -163,21 +221,37 @@ namespace TechTraderPrevention.Trading
             }
             finally
             {
-                replacementDepth--;
+                replacementWorker = previousWorker;
+                replacementParms = previousParms;
             }
 
-            if (resolved && retry.faction != null && TradingPolicy.FactionAllowed(retry.faction))
+            if (resolved && __0.faction != null && TradingPolicy.FactionAllowed(__0.faction))
             {
-                __0.faction = retry.faction;
-                __0.traderKind = retry.traderKind;
-                __0.spawnCenter = retry.spawnCenter;
-                Trace("Replaced a disallowed caravan faction with " + retry.faction.Name + ".");
+                Trace("Replaced a disallowed caravan faction with " + __0.faction.Name + ".");
             }
             else
             {
+                for (int i = 0; i < fields.Length; i++) fields[i].SetValue(__0, before[i]);
                 __result = settings.AllowOriginalWhenNoReplacement;
                 Trace(__result ? "Replacement rejected by the event resolver; allowing the original caravan by configuration."
                     : "Replacement rejected by the event resolver; cancelled the caravan.");
+            }
+        }
+
+        private static FieldInfo[] GetParameterFields(Type type)
+        {
+            lock (ParameterFields)
+            {
+                FieldInfo[] fields;
+                if (ParameterFields.TryGetValue(type, out fields)) return fields;
+                var writable = new List<FieldInfo>();
+                for (Type current = type; current != null && current != typeof(object); current = current.BaseType)
+                    foreach (FieldInfo field in current.GetFields(BindingFlags.Instance | BindingFlags.Public
+                        | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                        if (!field.IsInitOnly && !field.IsLiteral) writable.Add(field);
+                fields = writable.ToArray();
+                ParameterFields.Add(type, fields);
+                return fields;
             }
         }
 
@@ -185,6 +259,10 @@ namespace TechTraderPrevention.Trading
         {
             if (factionSourceMethod == null || Find.FactionManager == null)
                 return null;
+
+            TechTraderSettings settings = TechTraderMod.Settings;
+            int colonyLevel = (int)ColonyTech.CurrentLevel;
+            IncidentParms candidateParms = parms.ShallowCopy();
 
             // Keep the game's normal pass before its desperate/temperature-relaxed
             // pass. Do not recreate or weaken relationship, layer, or DLC checks.
@@ -194,13 +272,22 @@ namespace TechTraderPrevention.Trading
                 foreach (Faction faction in Find.FactionManager.AllFactionsListForReading)
                 {
                     if (faction == null || faction == parms.faction || faction.IsPlayer
-                        || faction.defeated || !TradingPolicy.FactionAllowed(faction))
+                        || faction.defeated || !TradingPolicy.FactionAllowed(faction, false, settings, colonyLevel))
                         continue;
 
+                    object previousWorker = suitabilityWorker;
+                    Faction previousFaction = suitabilityFaction;
+                    object previousContext = suitabilityContext;
                     try
                     {
-                        originalSuitabilityDepth++;
-                        object target = sourceUsesMap ? (object)(parms.target as Map) : parms;
+                        // Mimic normal candidate selection, before a faction or a
+                        // faction-specific trader kind has been selected.
+                        candidateParms.faction = null;
+                        candidateParms.traderKind = null;
+                        object target = sourceUsesMap ? (object)(parms.target as Map) : candidateParms;
+                        suitabilityWorker = worker;
+                        suitabilityFaction = faction;
+                        suitabilityContext = target;
                         if ((bool)factionSourceMethod.Invoke(worker, new[] { (object)faction, target, pass != 0 }))
                             choices.Add(faction);
                     }
@@ -211,7 +298,9 @@ namespace TechTraderPrevention.Trading
                     }
                     finally
                     {
-                        originalSuitabilityDepth--;
+                        suitabilityWorker = previousWorker;
+                        suitabilityFaction = previousFaction;
+                        suitabilityContext = previousContext;
                     }
                 }
 
@@ -221,18 +310,53 @@ namespace TechTraderPrevention.Trading
             return null;
         }
 
-        private static bool AddToTradeablesPrefix(Thing __0, Transactor __1)
+        private static void BuildTradePrefix(TradeDeal __instance, out TradeBuildScope __state)
         {
-            // Apply only to offered stock. Selling or gifting colony goods remains
-            // vanilla, and rejected stock stays with its original trader/owner.
-            return __1 != Transactor.Trader || TradeSession.giftMode
-                || TradingPolicy.OfferedThingAllowed(__0, TradeSession.trader);
+            __state = null;
+            if (TradeSession.giftMode || TechTraderMod.Settings == null || !TechTraderMod.Settings.TraderEnabled)
+                return;
+
+            ITrader trader = TradeSession.trader;
+            __state = new TradeBuildScope
+            {
+                Previous = currentTradeBuild,
+                Deal = __instance,
+                Trader = trader,
+                Context = TradingPolicy.CreateOfferContext(trader),
+                SettingsRevision = TechTraderMod.SettingsRevision
+            };
+            currentTradeBuild = __state;
+        }
+
+        private static Exception BuildTradeFinalizer(TradeBuildScope __state, Exception __exception)
+        {
+            if (__state != null) currentTradeBuild = __state.Previous;
+            return __exception;
+        }
+
+        private static bool AddToTradeablesPrefix(TradeDeal __instance, Thing __0, Transactor __1)
+        {
+            // Only offered stock is filtered. A scope amortizes trader/colony
+            // evaluation over hundreds of items without retaining session objects.
+            if (__1 != Transactor.Trader || TradeSession.giftMode) return true;
+            ITrader trader = TradeSession.trader;
+            TradeBuildScope scope = currentTradeBuild;
+            if (scope == null || !ReferenceEquals(scope.Deal, __instance) || !ReferenceEquals(scope.Trader, trader))
+                return TradingPolicy.OfferedThingAllowed(__0, trader);
+
+            if (scope.SettingsRevision != TechTraderMod.SettingsRevision)
+            {
+                scope.Context = TradingPolicy.CreateOfferContext(trader);
+                scope.SettingsRevision = TechTraderMod.SettingsRevision;
+            }
+            return TradingPolicy.OfferedThingAllowed(__0, scope.Context);
         }
 
         private static bool ExecuteTradePrefix(TradeDeal __instance, ref bool __0, ref bool __result)
         {
-            if (TradeSession.giftMode || !TradingPolicy.ChannelEnabled(TradeSession.trader))
-                return true;
+            if (TradeSession.giftMode) return true;
+            TradingPolicy.OfferContext context = TradingPolicy.CreateOfferContext(TradeSession.trader);
+            if (!context.Enabled) return true;
 
             // Recheck the actual purchase, including stock another mod may have
             // added after our normal list filter. This also handles a technology
@@ -241,15 +365,21 @@ namespace TechTraderPrevention.Trading
             {
                 if (tradeable == null || tradeable.IsCurrency || tradeable.ActionToDo != TradeAction.PlayerBuys)
                     continue;
-                Thing offered = tradeable.FirstThingTrader;
-                if (offered == null || TradingPolicy.OfferedThingAllowed(offered, TradeSession.trader))
-                    continue;
-
-                __0 = false;
-                __result = false;
-                Messages.Message("TTP_TradeRejected".Translate(),
-                    MessageTypeDefOf.RejectInput, false);
-                return false;
+                // A mod can combine heterogeneous objects into one tradeable.
+                // Checking only FirstThingTrader would permit prohibited objects
+                // hidden behind an allowed first stack in that combined row.
+                List<Thing> offered = tradeable.thingsTrader;
+                if (offered == null) continue;
+                foreach (Thing thing in offered)
+                {
+                    if (thing == null || thing.Destroyed || thing.stackCount <= 0
+                        || TradingPolicy.OfferedThingAllowed(thing, context))
+                        continue;
+                    __0 = false;
+                    __result = false;
+                    Messages.Message("TTP_TradeRejected".Translate(), MessageTypeDefOf.RejectInput, false);
+                    return false;
+                }
             }
             return true;
         }

@@ -17,6 +17,7 @@ The entry point explicitly installs the following trading patches. It does not d
 | `IncidentWorker_TraderCaravanArrival.FactionCanBeGroupSource` | Remove technologically disallowed candidates from ordinary caravan selection. | A postfix can only restrict an already-valid vanilla/modded candidate. The original suitability rules remain in force. |
 | `IncidentWorker_TraderCaravanArrival.TryResolveParmsGeneral` | Check the selected faction, including factions assigned explicitly by an incident. | A replacement receives one normal-resolver retry with its trader kind cleared. Failed replacement follows the configured fallback. There is no unbounded reroll loop. |
 | `IncidentWorker_TraderCaravanArrival.CanFireNowSub` | Carry the quest-preservation exception through early candidate checks. | Uses a scoped prefix/finalizer; it does not replace the game's availability calculation. |
+| `TradeDeal.AddAllTradeables()` | Share a purchase-policy context while the normal stock list is built. | Scoped by trade-deal identity; nested builds restore the previous context. Direct custom calls to `AddToTradeables` still get their own policy check. |
 | `TradeDeal.AddToTradeables(Thing, Transactor)` | Filter the trader's offered stock when the standard trade interface is populated. | Only `Transactor.Trader` is filtered. Colony sales and gifts remain available; rejected goods stay with the trader. |
 | `TradeDeal.TryExecute(out bool)` | Recheck an actual purchase immediately before execution. | Rejects a prohibited purchase added by a later patch or exposed by a stale trade window. It reports a localizable message and asks the player to reopen trade. |
 
@@ -27,7 +28,9 @@ The faction suitability signature changes between supported versions:
 | 1.4 / 1.5 | `FactionCanBeGroupSource(Faction, Map, bool)` |
 | 1.6 | `FactionCanBeGroupSource(Faction, IncidentParms, bool)` |
 
-The adapter discovers that signature at startup. Quest context is carried through both the availability check and the resolver, so older Map-only calls do not lose the incident's quest exception. Scoped counters are restored by finalizers, including when another mod throws; the finalizers do not suppress that exception.
+The adapter discovers that signature at startup and installs a typed postfix for the matching version, avoiding an allocated and boxed argument array on every faction probe. Quest context is carried through both the availability check and the resolver, so older Map-only calls do not lose the incident's quest exception. Quest, suitability-probe and replacement scopes match the actual worker/event identities; an unrelated nested incident does not inherit the outer exception. Finalizers restore prior contexts when another mod throws and do not suppress that exception.
+
+A replacement retry uses the original `IncidentParms` object so other mods retain its identity and successful resolver changes. On failure, cached writable fields are restored to their prior values. This is shallow field restoration; it cannot undo another mod's external side effects or mutations inside referenced objects.
 
 Research completion/reset methods on `ResearchManager` are observed when present: `FinishProject`, `ResetAllProgress`, and `DebugSetAllProjectsFinished`. The mod also invalidates its per-game cache on new-game/load/final initialization. A configurable periodic refresh catches research changes made through other paths. Faction and Manual modes read their selected level directly without scanning the research tree.
 
@@ -63,11 +66,13 @@ No expansion is listed as a dependency, and the mod does not require a DLC-only 
 
 ## Equipment and material integrations
 
-The preferred material source is `ThingDef.CostListAdjusted(item.Stuff)`, preserving the actual stuff material and allowing normal game/mod cost adjustments. A configurable recipe fallback is accepted only when ingredients and per-product quantities can be resolved unambiguously. Multiple incompatible recipes, mixed/uncertain ingredient choices, and unsupported materials preserve the original equipment instead of inventing a return value.
+The preferred material source is `ThingDef.CostListAdjusted(item.Stuff)`, preserving the actual stuff material and allowing normal game/mod cost adjustments. A configurable recipe fallback is accepted only when ingredients and per-product quantities can be resolved unambiguously. Multiple incompatible recipes, mixed/uncertain ingredient choices, custom recipe workers and unsupported materials preserve the original equipment when no usable adjusted cost list is available. A custom worker can change ingredient consumption beyond what a definition-only fallback can reconstruct.
 
 Material recovery reflects current definitions; it is not a historical record of the exact crafting bill that created an item. A fixed or per-item random survival percentage is applied to all of that item's resolved materials, with whole quantities rounded down. Hit-point scaling is optional. Explicitly configuring zero survival intentionally destroys qualifying broken gear without producing materials.
 
-Outputs are staged without merging into existing item stacks; the original item is removed only after successful placement. If placement cannot complete, staged outputs are rolled back and the original remains. Other mods can still run code during spawn/destruction, so combinations that replace those mechanics should be checked in-game.
+Outputs are staged with a request to avoid merging into existing item stacks. Placement callbacks record destination stacks and material counts, allowing standard merge/split behavior to be accounted for if a stacking mod redirects placement. The source item's stack size and ownership are checked again before destruction. If ordinary placement cannot complete, recorded output is rolled back and the original remains.
+
+These safeguards depend on the normal placement/destruction contracts. A mod that suppresses placement callbacks, deposits into unrelated virtual storage, or creates its own resources during destruction may need an adapter or equipment exclusions. Arbitrary external side effects cannot be reversed generically. The mod does not scan an entire map to try to infer unreported transfers.
 
 Loose inventory, items equipped only after a transition, gear already dropped before the selected trigger, and world-caravan transitions without a map are outside the salvage scope. Death-only mode cannot retroactively capture a weapon dropped during an earlier downing. Downed or DeathOrDowned mode can capture that earlier event. With downed-apparel handling enabled, apparel that survives downing can receive a separate later death roll; those are distinct events.
 
@@ -102,3 +107,21 @@ Settings-based **technology overrides** take priority over extension technology 
 Content mods that do not require this mod should add this extension through a conditional compatibility patch only when `SummerSausages2TTV.TechTraderPrevention` is installed. Do not place a reference to an unavailable extension class into an unconditional definition.
 
 For runtime integration, call `TechTraderMod.Changed()` after changing public settings programmatically, and `ColonyTech.Invalidate()` after changing research through an unobserved path. Runtime recipe-definition changes can invalidate the product index with `SalvagePatches.ClearCaches()`. User-level exclusions accept exact definition names, and research package exclusions use package IDs. Optional/unloaded definition names are harmless; they become relevant if that content is loaded later.
+
+## Large-modpack operation and diagnosis
+
+| Mod behavior | Integration and limit |
+|---|---|
+| Adds research, item, material or faction definitions | Loaded definitions participate automatically, subject to the configured exclusions and tech overrides. No fixed content-pack list is required. |
+| Changes the player's faction technology | Faction mode delegates the colony tier to that value. Research modes can optionally use it as a floor. |
+| Replaces a research UI | The calculation reads research definitions and completion state, not UI nodes. A separate progression system must expose normal completion or explicitly invalidate/provide faction technology. |
+| Extends the normal trade interface | The stock-build scope reuses trader/faction decisions; the transaction guard rechecks the trader-side items using fresh settings. A complete replacement that bypasses `TradeDeal` needs an adapter. |
+| Adds crafting-cost patches or stuffable materials | The adjusted-cost API is consulted for each eligible item; the recipe product index is cached. Runtime recipe mutations should explicitly clear that index. |
+| Adds death/downing, inventory, stacking or salvage behavior | Snapshots, transition guards, ownership rechecks and placement receipts cover normal shared API paths. Equipment-specific exclusions are available for unsupported behavior. |
+| Moves simulation work onto background threads or synchronizes multiplayer | This release does not claim support for those execution models. The ordinary game simulation-thread contract is assumed. |
+
+Harmony loads before this mod. Do not use an unconditional "load last" rule as a substitute for the other mods' own ordering requirements. The mod installs narrow prefixes/postfixes/finalizers and does not replace entire game methods with transpilers.
+
+Independent hooks are installed separately, so one failed target does not prevent attempts to install the remaining hooks. **Status & help** shows installation problems and can generate a local compatibility report. The report checks the current callbacks (including callbacks removed after startup), lists the Harmony owners on each target, and records the active mod IDs in load order. Another mod sharing a target is evidence to investigate, not a confirmed conflict. The report is generated only on request; it does not scan the patch registry during ordinary gameplay or upload logs.
+
+The same tab can refresh research, parsed overrides and recipe caches after runtime definition changes. For a reproducible issue, record that report along with the affected `defName`, trader type, selected feature settings, game version and reproduction steps. Report contents do not include save contents or local file paths, although the surrounding player log can contain information from other mods.

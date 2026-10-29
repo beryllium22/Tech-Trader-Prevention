@@ -25,8 +25,13 @@ dotnet run --project Tests/TechTrader.Core.Tests -c Release
 dotnet build Source/TechTrader/TechTrader.csproj -c Release -p:RimWorldVersion=1.4
 dotnet build Source/TechTrader/TechTrader.csproj -c Release -p:RimWorldVersion=1.5
 dotnet build Source/TechTrader/TechTrader.csproj -c Release -p:RimWorldVersion=1.6
+dotnet run --project Tests/TechTrader.GameApi.Tests -c Release -- . /path/to/global-packages
 python scripts/package.py
 ```
+
+For the metadata checker, replace `/path/to/global-packages` with the directory
+reported by `dotnet nuget locals global-packages --list`. The build script obtains
+that location automatically.
 
 ### Compile matrix
 
@@ -49,7 +54,7 @@ compatibility declaration needs its own verification.
 
 ### Policy scenarios
 
-The console test suite contains 37 scenario groups covering these behaviors:
+The console test suite contains 47 scenario groups covering these behaviors:
 
 - Same-or-lower, exact-tier, and bounded-range trader rules, including invalid
   values and upper-tier boundaries.
@@ -63,27 +68,48 @@ The console test suite contains 37 scenario groups covering these behaviors:
   invalid inputs, and integer overflow prevention.
 - A regression where floating-point representation of 70% could incorrectly
   recover six materials from a cost of ten instead of seven.
+- A 20,000-project research tree across both weighting modes, one-pass lazy
+  research input, finite aggregation of enormous modded costs, and malformed
+  per-tier thresholds falling back to the configured common threshold.
+- Every whole percentage from 0 through 100, monotonic bounded material recovery,
+  exact percentage recovery with very large stacks, zero-yield arithmetic with
+  overflowing costs, and rollback arithmetic that
+  preserves pre-existing destination resources.
 
 These tests execute the same pure policy library used by the game adapters.
 They do not mock an entire RimWorld game or claim to test Harmony at runtime.
 
-### Game-hook metadata inspection
+### Automated game-hook metadata checks
 
-The following method signatures were independently checked in the actual
-reference metadata for all three pinned game versions:
+The metadata-only console gate checks the actual reference assemblies for all
+three pinned game versions without loading or executing a game assembly. Its
+38 checks cover the reflected methods and injected backing field that ordinary
+compilation cannot verify. It reads version pins directly from the mod project,
+and an unknown future game version requires explicit API expectations.
+
+The checked targets include:
 
 | Hook | 1.4 / 1.5 | 1.6 |
 |---|---|---|
 | Trader faction suitability | `FactionCanBeGroupSource(Faction, Map, bool)` | `FactionCanBeGroupSource(Faction, IncidentParms, bool)` |
 | Trader incident resolution | `TryResolveParmsGeneral(IncidentParms)` | Same |
+| Trader availability context | `CanFireNowSub(IncidentParms)` | Same |
+| Stock-list build scope | `TradeDeal.AddAllTradeables()` | Same |
 | Offering trade stock | `TradeDeal.AddToTradeables(Thing, Transactor)` | Same |
 | Final trade execution | `TradeDeal.TryExecute(out bool)` | Same |
 | Pawn death | `Pawn.Kill(DamageInfo?, Hediff)` | Same |
 
 The trading adapter handles the observed faction-suitability signature change.
-The salvage adapter's optional downing target and backing pawn field were also
-checked in the three reference versions. Missing or changed hooks produce a log
-message rather than silently pretending that their feature is active.
+The gate also verifies the downing method, its injected pawn field, and research
+completion/reset targets. `ResearchManager.AddProgress` is absent on 1.4 and is an
+optional completion-boundary hook on 1.5/1.6. Periodic refresh remains available
+for changes made through other paths.
+
+At runtime, independent hook installation failures appear in the log and the
+settings status tab. The on-demand compatibility report verifies that expected
+callbacks are still installed and lists other owners on those targets. This
+can expose a removed hook; it does not prove that the combined patches behave
+correctly in game.
 
 ## In-game acceptance checklist
 
@@ -102,6 +128,8 @@ settings, and any relevant player-log entries for each test.
       reflects the correct colony's research rather than the previous save.
 - [ ] Disable each optional feature and confirm its corresponding game behavior
       remains unchanged.
+- [ ] Generate the compatibility report after all mods initialize. Check its
+      installation status, callback-presence results and load-order list.
 
 ### Research-derived colony technology
 
@@ -117,6 +145,10 @@ settings, and any relevant player-log entries for each test.
       verify it no longer contributes to progress.
 - [ ] Test with missing DLC/research tiers. Empty tiers should follow the selected
       empty-tier policy, without inventing completed research.
+- [ ] With another progression mod, change player-faction technology while a
+      research result is cached; verify Faction mode and the optional faction
+      floor react correctly. Check additions/removals to the loaded research
+      list and use manual refresh for in-place runtime definition mutations.
 
 ### Trader arrivals and offered goods
 
@@ -138,6 +170,13 @@ settings, and any relevant player-log entries for each test.
       rather than the wrapper's undefined technology, controls the restriction.
 - [ ] Verify explicit item/faction allow/block overrides and package exclusions,
       including the documented precedence when rules overlap.
+- [ ] With a custom incident resolver, exercise nested quest and ordinary
+      incidents. The ordinary event must not inherit a quest exemption, and a
+      successful replacement must retain the resolver's changes to its original
+      parameter object.
+- [ ] With a trade UI mod, verify a large stock list, nested stock builds and
+      custom grouped purchases. A forbidden item behind an allowed first stack
+      must not bypass the final transaction check.
 
 ### Equipment breakage and material recovery
 
@@ -162,6 +201,13 @@ settings, and any relevant player-log entries for each test.
       must preserve the original gear and roll back any partial material output.
 - [ ] Check gear moved or destroyed by another death-handling mod. It must not
       be recovered again or taken from another pawn.
+- [ ] With a stacking/placement mod, test partial merges, split outputs and a
+      later failed placement. Standard callbacks must restore the old resource
+      count without removing pre-existing materials. Check the log for rejected
+      or inconsistent placement receipts.
+- [ ] Move the source equipment during a placement hook and confirm the final
+      ownership check cancels destruction. Verify unsupported custom-recipe
+      fallback preserves equipment when adjusted crafting costs are absent.
 - [ ] Test an off-map/world-caravan death. The mod should skip material placement
       without an available map rather than creating invisible or duplicated loot.
 

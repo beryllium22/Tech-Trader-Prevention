@@ -17,26 +17,16 @@ namespace TechTraderPrevention
         {
             MethodInfo target = AccessTools.Method(typeof(Pawn), nameof(Pawn.Kill),
                 new[] { typeof(DamageInfo?), typeof(Hediff) });
-            if (target == null)
-            {
-                Log.Warning("[Tech Trader Prevention] Pawn.Kill hook was not found; equipment salvage is unavailable.");
-            }
-            else
-            {
-                harmony.Patch(target,
-                    prefix: new HarmonyMethod(typeof(SalvagePatches), nameof(CaptureBeforeDeath)) { priority = Priority.Last },
-                    postfix: new HarmonyMethod(typeof(SalvagePatches), nameof(RecoverAfterDeath)) { priority = Priority.Last },
-                    finalizer: new HarmonyMethod(typeof(SalvagePatches), nameof(FinalizeDeath)));
-            }
+            CompatibilityDiagnostics.Patch(harmony, target, "Equipment death",
+                prefix: new HarmonyMethod(typeof(SalvagePatches), nameof(CaptureBeforeDeath)) { priority = Priority.Last },
+                postfix: new HarmonyMethod(typeof(SalvagePatches), nameof(RecoverAfterDeath)) { priority = Priority.Last },
+                finalizer: new HarmonyMethod(typeof(SalvagePatches), nameof(FinalizeDeath)));
 
             MethodInfo downed = AccessTools.Method(typeof(Pawn_HealthTracker), "MakeDowned",
                 new[] { typeof(DamageInfo?), typeof(Hediff) });
-            if (downed == null || AccessTools.Field(typeof(Pawn_HealthTracker), "pawn") == null)
-            {
-                Log.Warning("[Tech Trader Prevention] Downing hook was not found; downing salvage is unavailable.");
-                return;
-            }
-            harmony.Patch(downed,
+            if (AccessTools.Field(typeof(Pawn_HealthTracker), "pawn") == null)
+                downed = null;
+            CompatibilityDiagnostics.Patch(harmony, downed, "Equipment downing",
                 prefix: new HarmonyMethod(typeof(SalvagePatches), nameof(CaptureBeforeDowned)) { priority = Priority.Last },
                 postfix: new HarmonyMethod(typeof(SalvagePatches), nameof(RecoverAfterDowned)) { priority = Priority.Last },
                 finalizer: new HarmonyMethod(typeof(SalvagePatches), nameof(FinalizeDowned)));
@@ -77,6 +67,7 @@ namespace TechTraderPrevention
             __state = null;
             TechTraderSettings settings = TechTraderMod.Settings;
             if (pawn == null || pawn.Dead || (downing && pawn.Downed) || settings == null || !settings.SalvageEnabled ||
+                settings.SalvageBreakChance <= 0f ||
                 (downing && settings.SalvageTriggerMode == SalvageTrigger.Death) ||
                 (!downing && settings.SalvageTriggerMode == SalvageTrigger.Downed) ||
                 !AffectsPawn(pawn, settings) || pawn.MapHeld == null || !ActiveTransitions.Add(pawn))
@@ -133,9 +124,12 @@ namespace TechTraderPrevention
                         if (item.Destroyed || item.stackCount != entry.StackCount ||
                             !StillBelongsToPawn(item, pawn, state.Map))
                             continue;
+                        // Most equipment does not break at a low configured chance. Avoid material
+                        // and recipe work for those items in large battles and content-heavy packs.
+                        if (!Rand.Chance(settings.SalvageBreakChance))
+                            continue;
                         List<SalvageMaterial> costs;
-                        if (!MaterialResolver.TryResolve(item, settings.SalvageRecipeFallback, out costs) ||
-                            !Rand.Chance(settings.SalvageBreakChance))
+                        if (!MaterialResolver.TryResolve(item, settings.SalvageRecipeFallback, out costs))
                             continue;
                         float fraction = SalvageMath.RecoveryFraction(settings.SalvageRandomYield,
                             settings.SalvageFixedYield, settings.SalvageMinYield, settings.SalvageMaxYield,

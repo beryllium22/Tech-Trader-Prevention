@@ -9,4 +9,7 @@ cd "$repo_dir"
 for game_version in 1.4 1.5 1.6; do
   "$dotnet_command" build Source/TechTrader/TechTrader.csproj -c Release -p:RimWorldVersion="$game_version"
 done
+packages_directory="$("$dotnet_command" nuget locals global-packages --list --force-english-output)"
+packages_directory="${packages_directory#*: }"
+"$dotnet_command" run --project Tests/TechTrader.GameApi.Tests -c Release -- "$repo_dir" "$packages_directory"
 python3 scripts/package.py

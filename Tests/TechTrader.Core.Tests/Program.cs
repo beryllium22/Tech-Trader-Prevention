@@ -131,6 +131,19 @@ namespace TechTraderPrevention.Core.Tests
                 rules.TierThresholds[3] = 0.5;
                 Equal(3, Calculate(new[] { R(3, 100, true), R(3, 100, false) }, rules).Level);
             });
+            Check("Malformed per-tier thresholds fall back to the configured common threshold", () =>
+            {
+                var rules = new ResearchRules { CompletionThreshold = 0.5 };
+                rules.TierThresholds[3] = double.NaN;
+                var result = Calculate(new[] { R(3, 100, true), R(3, 100, false) }, rules);
+                Equal(3, result.Level);
+                Near(0.5, result.Tiers[3].Threshold);
+                rules.CompletionThreshold = double.NaN;
+                rules.TierThresholds[3] = double.PositiveInfinity;
+                result = Calculate(new[] { R(3, 100, true), R(3, 100, false) }, rules);
+                Equal(2, result.Level);
+                Near(0.75, result.Tiers[3].Threshold);
+            });
             Check("Zero-cost included research has finite weight and can count as a project", () =>
             {
                 var result = Calculate(new[] { R(3, 0, true) });
@@ -192,6 +205,49 @@ namespace TechTraderPrevention.Core.Tests
                 var rules = new ResearchRules { MinimumTier = 5, MaximumTier = 2 };
                 Equal(5, Calculate(Array.Empty<ResearchSample>(), rules).Level);
             });
+            Check("A large modpack research tree retains exact tier counts and thresholds", () =>
+            {
+                IEnumerable<ResearchSample> LargeTree()
+                {
+                    for (int tier = 3; tier <= 6; tier++)
+                        for (int project = 0; project < 5000; project++)
+                            yield return R(tier, tier * 100, project % 4 != 3);
+                }
+                foreach (ResearchMetric metric in Enum.GetValues<ResearchMetric>())
+                {
+                    var result = Calculate(LargeTree(), new ResearchRules { Metric = metric });
+                    Equal(6, result.Level);
+                    for (int tier = 3; tier <= 6; tier++)
+                    {
+                        Equal(5000, result.Tiers[tier].TotalProjects);
+                        Equal(3750, result.Tiers[tier].CompletedProjects);
+                        Near(0.75, result.Tiers[tier].Completion);
+                        True(result.Tiers[tier].Qualifies);
+                    }
+                }
+            });
+            Check("Research is consumed in one pass even when a mod supplies a lazy sequence", () =>
+            {
+                int enumerations = 0;
+                IEnumerable<ResearchSample> Samples()
+                {
+                    if (++enumerations > 1) throw new InvalidOperationException("Research was enumerated again.");
+                    yield return R(3, 100, true);
+                    yield return R(4, 100, true);
+                    yield return R(5, 100, false);
+                }
+                Equal(4, Calculate(Samples()).Level);
+                Equal(1, enumerations);
+            });
+            Check("Huge modded research costs remain finite and cannot poison another tier", () =>
+            {
+                var result = Calculate(new[] { R(3, double.MaxValue, true), R(3, double.MaxValue, false), R(4, 100, true) },
+                    new ResearchRules { RequireLowerTiers = false });
+                Equal(4, result.Level);
+                Near(0.5, result.Tiers[3].Completion);
+                True(double.IsFinite(result.Tiers[3].TotalWeight));
+                True(result.Tiers[4].Qualifies);
+            });
         }
 
         private static void SalvageRecovery()
@@ -206,6 +262,11 @@ namespace TechTraderPrevention.Core.Tests
                 Equal(7, SalvageMath.RecoveredCount(10, 1, 0.7f));
                 Equal(29, SalvageMath.RecoveredCount(100, 1, 0.29f));
                 Equal(58, SalvageMath.RecoveredCount(100, 2, 0.29f));
+            });
+            Check("Large stack mods do not lose whole materials to floating-point multiplication", () =>
+            {
+                Equal(87000000, SalvageMath.RecoveredCount(3, 100000000, 0.29f));
+                Equal(203000000, SalvageMath.RecoveredCount(7, 100000000, 0.29f));
             });
             Check("True fractional materials round down instead of creating free ingredients", () =>
             {
@@ -248,6 +309,47 @@ namespace TechTraderPrevention.Core.Tests
                 Equal(50, SalvageMath.RecoveredCount(50, 1, 2));
                 Equal(0, SalvageMath.RecoveredCount(50, 1, float.NaN));
                 Equal(int.MaxValue, SalvageMath.RecoveredCount(1e12, int.MaxValue, 1));
+            });
+            Check("Zero recovery remains zero when a malformed finite cost would overflow", () =>
+            {
+                Equal(0, SalvageMath.RecoveredCount(double.MaxValue, 2, 0));
+                Equal(0, SalvageMath.RecoveredCount(double.MaxValue, int.MaxValue, 0));
+                Equal(0, SalvageMath.RecoveredCount(double.MaxValue, int.MaxValue, float.NaN));
+                Equal(int.MaxValue, SalvageMath.RecoveredCount(double.MaxValue, 2, 1));
+            });
+            Check("Every whole survival percentage recovers the corresponding count from one hundred", () =>
+            {
+                for (int percent = 0; percent <= 100; percent++)
+                    Equal(percent, SalvageMath.RecoveredCount(100, 1, percent / 100f));
+            });
+            Check("Increasing survival never reduces recovery or exceeds original crafting costs", () =>
+            {
+                foreach (double cost in new[] { 0.25, 1, 3, 80, 137.25, 10000 })
+                {
+                    int previous = 0;
+                    for (int percent = 0; percent <= 100; percent++)
+                    {
+                        int current = SalvageMath.RecoveredCount(cost, 3, percent / 100f);
+                        True(current >= previous);
+                        True(current <= Math.Floor(cost * 3));
+                        previous = current;
+                    }
+                }
+            });
+            Check("Salvage rollback preserves pre-existing destination materials", () =>
+            {
+                Equal(10, SalvageMath.RollbackCount(110, 100, 10));
+                Equal(5, SalvageMath.RollbackCount(105, 100, 10));
+                Equal(0, SalvageMath.RollbackCount(95, 100, 10));
+                Equal(10, SalvageMath.RollbackCount(150, 100, 10));
+            });
+            Check("Salvage rollback safely handles invalid or enormous material counts", () =>
+            {
+                Equal(int.MaxValue, SalvageMath.RollbackCount(int.MaxValue, 0, long.MaxValue));
+                Equal(0, SalvageMath.RollbackCount(-1, 0, 10));
+                Equal(0, SalvageMath.RollbackCount(100, 0, -10));
+                Equal(0, SalvageMath.RollbackCount(100, int.MaxValue, long.MaxValue));
+                Equal(10, SalvageMath.RollbackCount(100, -1, 10));
             });
         }
 

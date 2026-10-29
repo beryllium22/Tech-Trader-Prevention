@@ -8,6 +8,7 @@ namespace TechTraderPrevention
 {
     public sealed class TechTraderMod : Mod
     {
+        internal const string HarmonyId = "summersausages2.techtraderprevention";
         public static TechTraderSettings Settings { get; private set; } = new TechTraderSettings();
         public static int SettingsRevision { get; private set; }
         public static TechTraderMod Instance { get; private set; }
@@ -19,7 +20,7 @@ namespace TechTraderPrevention
             Settings = GetSettings<TechTraderSettings>();
             Settings.Normalize();
             SettingsRevision++;
-            var harmony = new Harmony("summersausages2.techtraderprevention");
+            var harmony = new Harmony(HarmonyId);
             Install("research", () => ColonyTech.Apply(harmony));
             Install("trading", () => TradingPatches.Apply(harmony));
             Install("equipment salvage", () => SalvagePatches.Apply(harmony));
@@ -28,7 +29,7 @@ namespace TechTraderPrevention
         private static void Install(string feature, Action install)
         {
             try { install(); }
-            catch (Exception e) { Log.Error("[Tech Trader Prevention] Could not install " + feature + " hooks: " + e); }
+            catch (Exception e) { CompatibilityDiagnostics.RecordFailure(feature, e); }
         }
 
         public override string SettingsCategory() => "TTP_Name".Translate();

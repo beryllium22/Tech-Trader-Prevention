@@ -192,6 +192,15 @@ namespace TechTraderPrevention
                 if (l.ButtonText("Recalculate now")) ColonyTech.Invalidate();
             }
             Heading(l, "Compatibility behavior");
+            Help(l, CompatibilityDiagnostics.InstallationSummary);
+            if (l.ButtonText("Write compatibility report to player log")) CompatibilityDiagnostics.WriteReport();
+            Help(l, "Lists current hook status, other Harmony owners on the same methods, and loaded mod IDs. Shared hooks are not automatically conflicts. The report stays in your local log.");
+            if (l.ButtonText("Refresh research, overrides and recipe caches"))
+            {
+                TechTraderMod.Changed();
+                SalvagePatches.ClearCaches();
+            }
+            Help(l, "Use refresh after another mod changes research or recipe definitions during play. This does not edit shared definitions or reset your settings.");
             Help(l, "RimWorld 1.4, 1.5 and 1.6 build targets. Harmony is required; DLC is optional. The mod reads currently loaded definitions and does not edit faction tech or research costs globally. Use Faction mode with a mod that already manages faction tech.");
             Help(l, "Standard trade interfaces are filtered without destroying trader stock. Mods that replace the trade system entirely may need an adapter. Quest-linked trader identities, currency and pawn trading are preserved by default. Reopen an already-open trade window after changing settings.");
             Help(l, "Salvage is disabled by default. Defaults target hostile humanlike pawns' equipment above the allowed tech ceiling, with a 50% per-item break chance and 50% material survival. Relics, biocoded items and uncertain crafting costs are preserved.");

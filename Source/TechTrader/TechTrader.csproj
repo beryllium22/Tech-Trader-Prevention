@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>TechTraderPrevention</AssemblyName>
+    <RootNamespace>TechTraderPrevention</RootNamespace>
+    <OutputPath>../../$(RimWorldVersion)/Assemblies/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <RimWorldReferenceVersion Condition="'$(RimWorldVersion)' == '1.4'">1.4.3901</RimWorldReferenceVersion>
+    <RimWorldReferenceVersion Condition="'$(RimWorldVersion)' == '1.5'">1.5.4409</RimWorldReferenceVersion>
+    <RimWorldReferenceVersion Condition="'$(RimWorldVersion)' == '1.6'">1.6.4871</RimWorldReferenceVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Reference-only packages; never ship game assemblies or a second Harmony copy. -->
+    <PackageReference Include="Krafs.Rimworld.Ref" Version="$(RimWorldReferenceVersion)" PrivateAssets="all" />
+    <PackageReference Include="Lib.Harmony" Version="2.2.2" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <ProjectReference Include="../TechTrader.Core/TechTrader.Core.csproj" />
+  </ItemGroup>
+  <Target Name="CheckSupportedRimWorldVersion" BeforeTargets="Restore;PrepareForBuild">
+    <Error Condition="'$(RimWorldReferenceVersion)' == ''" Text="Unsupported RimWorldVersion '$(RimWorldVersion)'. Supported build targets: 1.4, 1.5, 1.6." />
+  </Target>
+</Project>

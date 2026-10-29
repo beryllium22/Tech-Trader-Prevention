@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <TTP_Name>Tech Trader Prevention</TTP_Name>
+  <TTP_TradeRejected>This purchase exceeds your Tech Trader Prevention rules. Reopen the trade window to refresh the available goods.</TTP_TradeRejected>
+</LanguageData>

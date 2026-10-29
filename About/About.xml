@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>Tech Trader Prevention</name>
+  <author>SummerSausages2TTV</author>
+  <packageId>SummerSausages2TTV.TechTraderPrevention</packageId>
+  <modVersion>2.0.0</modVersion>
+  <url>https://github.com/beryllium22/Tech-Trader-Prevention</url>
+  <supportedVersions><li>1.4</li><li>1.5</li><li>1.6</li></supportedVersions>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+      <steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl>
+      <downloadUrl>https://github.com/pardeike/HarmonyRimWorld/releases/latest</downloadUrl>
+    </li>
+  </modDependencies>
+  <loadAfter><li>brrainz.harmony</li></loadAfter>
+  <incompatibleWith>
+    <li>SummerSausages2TTV.PreventHigherTechTraders.Specific</li>
+    <li>SummerSausages2TTV.ReplaceHigherTechTraders.Specific</li>
+  </incompatibleWith>
+  <description>Restrict trader factions and purchases to your colony's technology level. Determine colony tech from researched projects, configurable tier-completion thresholds, your faction, or a manual override. Customize trade channels, tier allowances, and individual modded definitions.
+
+Optional equipment salvage can break equipped weapons and worn apparel on death, downing, or both into definition-based crafting materials. Configure affected pawn groups, per-item break chance, fixed or randomized material survival, and protected gear.
+
+Harmony is required. No DLC is required. Quest-linked trader identities, currency, relics, biocoded gear, and quest-tagged equipment are protected by default. Salvage is disabled until enabled in settings.
+
+This is the source-based 2.0 rewrite. Disable both legacy Prevent/Replace Higher Tech Traders variants before enabling it.</description>
+</ModMetaData>

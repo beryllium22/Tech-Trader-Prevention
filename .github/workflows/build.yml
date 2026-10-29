@@ -1,0 +1,29 @@
+name: Build and verify mod
+
+on:
+  push:
+    branches: [main, 'rewrite/**', 'feature/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Verify policy scenarios and compile against supported game APIs
+        run: bash scripts/build.sh
+      - name: Upload installable mod and checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: TechTraderPrevention-2.0.0
+          path: |
+            dist/TechTraderPrevention-2.0.0.zip
+            dist/manifest.json
+          if-no-files-found: error

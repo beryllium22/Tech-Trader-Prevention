@@ -1,0 +1,18 @@
+# Keep only this mod's own runtime assemblies for direct GitHub ZIP installs.
+# Never commit game references, Harmony copies, symbols, or intermediate outputs.
+**/bin/
+**/obj/
+1.4/Assemblies/*
+!1.4/Assemblies/TechTraderPrevention.dll
+!1.4/Assemblies/TechTraderPrevention.Core.dll
+1.5/Assemblies/*
+!1.5/Assemblies/TechTraderPrevention.dll
+!1.5/Assemblies/TechTraderPrevention.Core.dll
+1.6/Assemblies/*
+!1.6/Assemblies/TechTraderPrevention.dll
+!1.6/Assemblies/TechTraderPrevention.Core.dll
+dist/
+*.user
+*.suo
+.vs/
+.idea/
